@@ -5,7 +5,7 @@ Thumbs.db
 # Node / tooling (not used yet, but common)
 node_modules/
 dist/
-build/
+
 
 # Python venvs / caches (if used locally)
 .venv/
