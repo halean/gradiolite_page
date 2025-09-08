@@ -1,0 +1,15 @@
+{
+  "runtime": { "default": "pyodide" },
+  "gradioLite": {
+    "augmentRequirements": true,
+    "defaultRequirements": [
+      "transformers-js-py"
+    ]
+  },
+  "cdn": {
+    "pyodideBase": "https://cdn.jsdelivr.net/pyodide/v0.26.1/full/",
+    "gradioLite": "https://cdn.jsdelivr.net/npm/@gradio/lite/dist/lite.js",
+    "monacoBase": "https://cdn.jsdelivr.net/npm/monaco-editor@0.48.0/min/vs"
+  }
+}
+

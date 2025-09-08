@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gradiolite – Browser POC</title>
+    <link rel="stylesheet" href="assets/style.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@gradio/lite/dist/lite.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Gradiolite (Browser POC)</h1>
+      <div class="controls">
+        <label>
+          LLM:
+          <select id="llm-provider">
+            <option value="toy">Toy (offline)</option>
+            <option value="openai">OpenAI API</option>
+          </select>
+        </label>
+        <input id="openai-key" type="password" placeholder="OpenAI API Key (sk-...)" />
+        <label>
+          Runtime:
+          <select id="runtime-provider">
+            <option value="pyodide">Pyodide Console</option>
+            <option value="gradio-lite">Gradio Lite</option>
+            <option value="jupyterlite">JupyterLite</option>
+          </select>
+        </label>
+        <button id="save-llm">Save</button>
+        <button id="run-code">Run ▶</button>
+      </div>
+    </header>
+
+    <main class="columns">
+      <section class="panel chat" id="chat-panel">
+        <div class="messages" id="chat-log"></div>
+        <div class="composer">
+          <textarea id="chat-input" rows="2" placeholder="Ask for code or describe a task..."></textarea>
+          <button id="chat-send">Send</button>
+        </div>
+      </section>
+
+      <section class="panel code" id="code-panel">
+        <div class="panel-header">
+          <span>Code</span>
+          <span class="lang" id="code-lang">python</span>
+        </div>
+        <div id="code-editor-host" class="editor-host"></div>
+      </section>
+
+      <section class="panel output" id="output-panel">
+        <div class="panel-header">
+          <span>Output</span>
+          <span id="runtime-status" class="status">pyodide: init...</span>
+        </div>
+        <div class="output-views">
+          <div id="notebook" class="console-view nb-root"></div>
+          <div id="gradio-root" class="gradio-root"></div>
+          <div id="jlite-root" class="jlite-root">
+            <iframe 
+              id="jupyterlite_cmd"
+              src="./assets/_output/repl/index.html?toolbar=1&kernel=python"
+              allow="clipboard-write"
+              title="JupyterLite Python REPL (self-hosted)"
+            ></iframe>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <small>
+        No backend required. Chat logic and execution run via WebAssembly in your browser.
+      </small>
+    </footer>
+
+    <script src="assets/app.js" type="module"></script>
+  </body>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('assets/sw.js').catch(() => {});
+      });
+    }
+  </script>
+  </html>

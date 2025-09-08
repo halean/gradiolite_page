@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JupyterLite (Local Host)</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #0f131d; color: #e6e6e6; }
+      .wrap { height: 100%; display: grid; grid-template-rows: auto 1fr; }
+      header { font: 12px/1.4 system-ui, sans-serif; padding: 4px 8px; color: #a0a0a0; display: flex; gap: 8px; align-items: center; }
+      iframe { width: 100%; height: 100%; border: 0; }
+      button { background: #1a2333; border: 1px solid #222533; color: #e6e6e6; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+      textarea { width: 100%; height: 80px; background: #0f131d; color: #e6e6e6; border: 1px solid #222533; border-radius: 6px; }
+      .tools { display: none; grid-template-rows: auto auto; gap: 6px; padding: 6px 8px; border-top: 1px solid #222533; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <span>JupyterLite (embedded)</span>
+        <button id="open-lab">Open Lab</button>
+        <button id="open-retro"]>Open Retro</button>
+        <button id="copy-code">Copy Code</button>
+      </header>
+      <iframe id="jlite-app" title="JupyterLite App"></iframe>
+      <div class="tools" id="tools">
+        <textarea id="seed" placeholder="Seed code...\nWill be copied to clipboard when pressing 'Copy Code'."></textarea>
+      </div>
+    </div>
+    <script>
+      const app = document.getElementById('jlite-app');
+      const openLab = document.getElementById('open-lab');
+      const openRetro = document.getElementById('open-retro');
+      const copyBtn = document.getElementById('copy-code');
+      const seed = document.getElementById('seed');
+      const tools = document.getElementById('tools');
+
+      // Prefer a locally hosted JupyterLite build to avoid iframe restrictions
+      // Place your JupyterLite static build under `jlite/` at the repo root
+      // e.g., `jlite/lab/index.html` and `jlite/retro/tree/`
+      // Fallbacks (if local paths 404) can be added, but many public hosts disallow iframes
+      const LAB_URL = '../jlite/lab/index.html';
+      const RETRO_URL = '../jlite/retro/tree/';
+      app.src = LAB_URL;
+
+      openLab.addEventListener('click', () => app.src = LAB_URL);
+      openRetro.addEventListener('click', () => app.src = RETRO_URL);
+      copyBtn.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(seed.value || ''); } catch {}
+      });
+
+      // Receive seed code from parent
+      window.addEventListener('message', (ev) => {
+        const msg = ev.data || {};
+        if (msg && msg.type === 'seed-code') {
+          seed.value = msg.code || '';
+          tools.style.display = 'grid';
+        }
+      });
+    </script>
+  </body>
+  </html>
