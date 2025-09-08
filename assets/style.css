@@ -64,6 +64,7 @@ body {
   color: var(--muted);
 }
 .panel-header .lang { color: var(--accent); font-size: 12px; }
+.panel-header  button { cursor: pointer; }
 .status { font-size: 12px; color: var(--muted); }
 
 /* Chat panel */
