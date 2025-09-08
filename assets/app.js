@@ -20,6 +20,12 @@ const runtimeProviderSel = $('#runtime-provider');
 const gradioRoot = $('#gradio-root');
 const jliteRoot = $('#jlite-root');
 const jliteIframe = $('#jupyterlite_cmd');
+// Examples UI elements
+const examplesList = document.querySelector('#examples-list');
+const examplesSearch = document.querySelector('#examples-search');
+const examplesTabs = document.querySelectorAll('.examples-tabs button');
+let examplesActiveTab = 'codes';
+let examplesData = { codes: [], prompts: [] };
 // Persistent settings
 const storage = {
   get(key, def=null) { try { return JSON.parse(localStorage.getItem(key)) ?? def; } catch { return def; } },
@@ -63,6 +69,15 @@ async function loadConfig() {
       gradioLite: { ...appConfig.gradioLite, ...(cfg.gradioLite || {}) },
       cdn: { ...appConfig.cdn, ...(cfg.cdn || {}) }
     };
+  } catch {}
+  // Try to load examples from optional JSON
+  try {
+    const r2 = await fetch('assets/examples.json', { cache: 'no-cache' });
+    if (r2.ok) {
+      const ex = await r2.json();
+      const norm = { codes: Array.isArray(ex.codes) ? ex.codes : [], prompts: Array.isArray(ex.prompts) ? ex.prompts : [] };
+      if (norm.codes.length || norm.prompts.length) examplesData = norm;
+    }
   } catch {}
 }
 
@@ -539,3 +554,157 @@ function loadJupyterLite(code) {
     jliteIframe.contentWindow.postMessage({ type: 'seed-code', code }, '*');
   } catch {}
 }
+
+// -----------------------
+// Examples: data + render
+// -----------------------
+const defaultExamples = {
+  codes: [
+    {
+      id: 'hello-plot',
+      title: 'Matplotlib: Sine Curve',
+      desc: 'Simple plot rendered in the Pyodide console.',
+      tags: ['python', 'matplotlib'],
+      language: 'python',
+      code: `import numpy as np\nimport matplotlib.pyplot as plt\nx = np.linspace(0, 2*np.pi, 200)\ny = np.sin(x)\nplt.plot(x, y)\nplt.title('Sine Curve')\nplt.show()`
+    },
+    {
+      id: 'gradio-echo',
+      title: 'Gradio: Echo App',
+      desc: 'Minimal Gradio interface via Gradio Lite.',
+      tags: ['python', 'gradio', 'ui'],
+      language: 'python',
+      code: `import gradio as gr\n\ndef echo(x):\n    return x\n\ndemo = gr.Interface(fn=echo, inputs=gr.Textbox(), outputs=gr.Textbox())\ndemo.launch()`
+    },
+    {
+      id: 'pandas-summary',
+      title: 'Pandas: DataFrame Summary',
+      desc: 'Create a DataFrame and print describe().',
+      tags: ['python', 'pandas'],
+      language: 'python',
+      code: `import pandas as pd\ndf = pd.DataFrame({\n    'a': [1,2,3,4,5],\n    'b': [10,20,30,20,10]\n})\nprint(df.describe())`
+    }
+  ],
+  prompts: [
+    { id: 'prompt-fib', title: 'Fibonacci function', text: 'Write a Python function that returns the first N Fibonacci numbers and print the list for N=20.' },
+    { id: 'prompt-chart', title: 'Bar chart', text: 'Generate Python code to display a bar chart for fruit sales using matplotlib.' },
+    { id: 'prompt-gradio', title: 'Gradio sentiment', text: 'Create a minimal Gradio app with a textbox and a label that returns whether the text is positive or negative (mock logic is fine).' }
+  ]
+};
+
+function getExamples() {
+  const data = {
+    codes: (examplesData.codes && examplesData.codes.length ? examplesData.codes : defaultExamples.codes),
+    prompts: (examplesData.prompts && examplesData.prompts.length ? examplesData.prompts : defaultExamples.prompts),
+  };
+  return data;
+}
+
+function renderExamples() {
+  if (!examplesList) return;
+  const query = (examplesSearch?.value || '').toLowerCase();
+  const data = getExamples();
+  const items = examplesActiveTab === 'codes' ? data.codes : data.prompts;
+  const filtered = items.filter((it) => {
+    const hay = [it.title, it.desc, it.text, (it.tags || []).join(' ')].join(' ').toLowerCase();
+    return hay.includes(query);
+  });
+
+  examplesList.replaceChildren();
+  filtered.forEach((it) => {
+    const el = document.createElement('div');
+    el.className = 'example-item';
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.textContent = it.title || 'Untitled';
+    el.appendChild(title);
+    if (it.desc) {
+      const desc = document.createElement('div');
+      desc.className = 'desc';
+      desc.textContent = it.desc;
+      el.appendChild(desc);
+    }
+    if (it.tags && it.tags.length) {
+      const tags = document.createElement('div');
+      tags.className = 'tags';
+      it.tags.forEach((t) => {
+        const span = document.createElement('span');
+        span.className = 'tag';
+        span.textContent = t;
+        tags.appendChild(span);
+      });
+      el.appendChild(tags);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    if (examplesActiveTab === 'codes') {
+      const selectRuntime = (rt) => {
+        if (!rt) return;
+        runtimeProviderSel.value = rt;
+        runtimeProviderSel.dispatchEvent(new Event('change'));
+      };
+      const guessRuntimeForCode = (item) => {
+        if (item.runtime) return item.runtime;
+        const blob = `${(item.code||'')} ${(item.tags||[]).join(' ')}`.toLowerCase();
+        if (blob.includes('gradio') || blob.includes('<gradio-lite')) return 'gradio-lite';
+        return 'jupyterlite';
+      };
+      const insertBtn = document.createElement('button');
+      insertBtn.textContent = 'Insert';
+      insertBtn.addEventListener('click', () => {
+        if (it.language) setEditorLanguage(it.language);
+        if (codeLang) codeLang.textContent = (it.language || 'python');
+        setEditorValue(it.code || '');
+        selectRuntime(guessRuntimeForCode(it));
+      });
+      const runBtn2 = document.createElement('button');
+      runBtn2.textContent = 'Run';
+      runBtn2.addEventListener('click', () => {
+        if (it.language) setEditorLanguage(it.language);
+        if (codeLang) codeLang.textContent = (it.language || 'python');
+        setEditorValue(it.code || '');
+        selectRuntime(guessRuntimeForCode(it));
+        runBtn?.click();
+      });
+      actions.appendChild(insertBtn);
+      actions.appendChild(runBtn2);
+    } else {
+      const sendBtn = document.createElement('button');
+      sendBtn.textContent = 'Send';
+      sendBtn.addEventListener('click', () => {
+        if (chatInput) chatInput.value = it.text || '';
+        // Default prompts to JupyterLite unless runtime specified
+        const rt = it.runtime || 'jupyterlite';
+        runtimeProviderSel.value = rt;
+        runtimeProviderSel.dispatchEvent(new Event('change'));
+        chatSend?.click();
+      });
+      const insertBtn = document.createElement('button');
+      insertBtn.textContent = 'Insert';
+      insertBtn.addEventListener('click', () => {
+        if (chatInput) chatInput.value = it.text || '';
+        const rt = it.runtime || 'jupyterlite';
+        runtimeProviderSel.value = rt;
+        runtimeProviderSel.dispatchEvent(new Event('change'));
+        chatInput?.focus();
+      });
+      actions.appendChild(sendBtn);
+      actions.appendChild(insertBtn);
+    }
+    el.appendChild(actions);
+    examplesList.appendChild(el);
+  });
+}
+
+examplesTabs?.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    examplesTabs.forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    examplesActiveTab = btn.dataset.tab;
+    renderExamples();
+  });
+});
+examplesSearch?.addEventListener('input', () => renderExamples());
+
+// Initial render (after a tick so elements exist)
+setTimeout(renderExamples, 0);
