@@ -81,7 +81,7 @@ async function loadConfig() {
       if (norm.codes.length || norm.prompts.length) examplesData = norm;
     }
   } catch {}
-  // Optional tips override
+  // Optional tips override (ignored by toasts if absent)
   try {
     const r3 = await fetch('assets/tips.json', { cache: 'no-cache' });
     if (r3.ok) {
@@ -540,8 +540,8 @@ function detectAutoRequirements(pyText) {
 
 // Initialize default visible output view
 switchToView(runtimeProviderSel.value === 'gradio-lite' ? 'gradio' : 'console');
-// Initialize Monaco
-ensureMonaco();
+// Initialize Monaco (ignore failures in offline/dev)
+try { ensureMonaco().catch(() => {}); } catch (_) {}
 // Preload Gradio Lite if currently selected; also load on selection change
 if (runtimeProviderSel.value === 'gradio-lite') ensureGradioLiteLoaded();
 runtimeProviderSel.addEventListener('change', () => {
@@ -771,119 +771,82 @@ function shuffle(arr) {
   return a;
 }
 
-// Tip state and helpers
-const tipsState = {
-  list: [],
-  byArea: {},
-  idxByArea: { chat: 0, code: 0, examples: 0, output: 0, runtime: 0 },
-};
-let tipsPriorityArea = null;
+// (Removed legacy ticker/debug code)
 
-// DEBUG helper: nextTip() yields current column label
-// Columns: chat, code, examples, console (maps from output)
-let __tipsHoverArea = null; // 'chat' | 'code' | 'examples' | 'output' | null
-let __lastTipValue = 'console';
-function nextTip() {
-  const map = { chat: 'chat', code: 'code', examples: 'examples', output: 'console' };
-  if (__tipsHoverArea && map[__tipsHoverArea]) {
-    __lastTipValue = map[__tipsHoverArea];
+// Toast tips: context-dependent, every 2 seconds while hovering
+function initTipsToasts() {
+  // Create container once
+  let container = document.querySelector('.toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'toast-container';
+    document.body.appendChild(container);
   }
-  // If mouse stays over same column, returns same value; if no hover, repeats last
-  return __lastTipValue;
-}
 
-function nextTipFromArea(area) {
-  const arr = tipsState.byArea[area] || [];
-  if (!arr.length) return null;
-  const i = tipsState.idxByArea[area] || 0;
-  const tip = arr[i % arr.length];
-  tipsState.idxByArea[area] = (i + 1) % arr.length;
-  return tip;
-}
+  // Build per-area tips
+  const byArea = {
+    chat: [
+      'Chat: Ask for code, then use Insert',
+      'Chat: Shift+Enter adds a newline',
+    ],
+    code: [
+      'Code: Modify the code and press Run',
+      'Code: Change language under the header',
+    ],
+    examples: [
+      'Examples: Click Run to auto-select runtime',
+      'Examples: Prompts send directly to chat',
+    ],
+    output: [
+      'Console: Results and plots appear here',
+      'Console: Switch runtime from the dropdown',
+    ],
+    runtime: [
+      'Runtime: Click to change where code runs',
+      'Runtime: JupyterLite for plots, Gradio for UI',
+    ],
+  };
+  Object.keys(byArea).forEach((k) => { if (!Array.isArray(byArea[k])) byArea[k] = []; });
+  const idx = { chat: 0, code: 0, examples: 0, output: 0, runtime: 0 };
 
-function buildSequence(prioritizedArea) {
-  const seen = new Set();
-  const seq = [];
-  if (prioritizedArea) {
-    const t = nextTipFromArea(prioritizedArea);
-    if (t) { seq.push(t); seen.add(t); }
+  function nextTipFor(area) {
+    const arr = byArea[area] && byArea[area].length ? byArea[area] : [''];
+    const i = (idx[area] || 0) % arr.length;
+    idx[area] = (i + 1) % arr.length;
+    return arr[i];
   }
-  // Fill with area-specific tips then general tips
-  ['chat','code','examples','output','runtime'].forEach((area) => {
-    (tipsState.byArea[area] || []).forEach((t) => { if (!seen.has(t)) { seq.push(t); seen.add(t); } });
-  });
-  tipsState.list.forEach((t) => { if (!seen.has(t)) { seq.push(t); seen.add(t); } });
-  // Ensure we always have something
-  if (!seq.length) seq.push('Welcome');
-  return seq;
-}
 
-function restartTickerWithSequence(track, seq) {
-  const loop = () => seq.map((t) => `<span class="tip">${t}</span><span class="sep">•</span>`).join('');
-  track.innerHTML = loop() + loop();
-  // Restart animation cleanly
-  track.style.animation = 'none';
-  // Force reflow
-  void track.offsetHeight; // eslint-disable-line no-unused-expressions
-  track.style.animation = '';
-  // Adjust speed (~80px/sec)
-  requestAnimationFrame(() => {
-    const w = track.scrollWidth;
-    const seconds = Math.max(20, Math.round(w / 80));
-    track.style.setProperty('--speed', `${seconds}s`);
-  });
-}
-
-async function initTipsTicker() {
-  const track = document.getElementById('tips-track');
-  if (!track) return;
-  // Ensure config is loaded
-  try { await loadConfig(); } catch {}
-  // DEBUG path: drive ticker with nextTip()
-  if (typeof nextTip === 'function') {
-    // Hook hover on columns to update which label nextTip() returns
-    const areaMap = {
-      chat: document.getElementById('chat-panel'),
-      code: document.getElementById('code-panel'),
-      examples: document.getElementById('examples-panel'),
-      output: document.getElementById('output-panel'),
-    };
-    const fillWithNextTips = () => {
-      const items = Array.from({ length: 16 }, () => `<span class="tip">${nextTip()}</span><span class="sep">•</span>`).join('');
-      track.innerHTML = items + items; // duplicate for continuous scroll
-      requestAnimationFrame(() => {
-        const w = track.scrollWidth;
-        const seconds = Math.max(10, Math.round(w / 80));
-        track.style.setProperty('--speed', `${seconds}s`);
-      });
-    };
-    Object.entries(areaMap).forEach(([area, el]) => {
-      if (!el) return;
-      el.addEventListener('mouseenter', () => { __tipsHoverArea = area; fillWithNextTips(); });
-      el.addEventListener('mouseleave', () => { __tipsHoverArea = null; fillWithNextTips(); });
-    });
-    fillWithNextTips();
-    track.addEventListener('animationiteration', fillWithNextTips);
-    return; // skip contextual tips while debugging
+  function showToast(text, duration = 1800) {
+    if (!text) return;
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = text;
+    container.appendChild(t);
+    // Animate in
+    requestAnimationFrame(() => { t.classList.add('show'); });
+    // Schedule hide
+    setTimeout(() => {
+      t.classList.add('hide');
+      setTimeout(() => { t.remove(); }, 250);
+    }, duration);
   }
-  const tips = Array.isArray(appConfig.tips) && appConfig.tips.length ? appConfig.tips : defaultTipsList;
-  const byArea = { ...defaultTipsByArea, ...(appConfig.tipsByArea || {}) };
-  // Normalize area arrays
-  ['chat','code','examples','output','runtime'].forEach((k) => {
-    if (!Array.isArray(byArea[k])) byArea[k] = [];
-  });
-  tipsState.list = shuffle(tips);
-  tipsState.byArea = byArea;
 
-  restartTickerWithSequence(track, buildSequence());
+  let activeArea = null;
+  let timer = null;
 
-  // On each animation loop, if a priority area is active, advance that area
-  track.addEventListener('animationiteration', () => {
-    const seq = buildSequence(tipsPriorityArea || undefined);
-    restartTickerWithSequence(track, seq);
-  });
+  function startArea(area) {
+    stopArea();
+    activeArea = area;
+    showToast(nextTipFor(activeArea));
+    timer = setInterval(() => {
+      showToast(nextTipFor(activeArea));
+    }, 2000);
+  }
+  function stopArea() {
+    if (timer) { clearInterval(timer); timer = null; }
+    activeArea = null;
+  }
 
-  // Hover handlers on columns to prioritize next tip
   const areaMap = {
     chat: document.getElementById('chat-panel'),
     code: document.getElementById('code-panel'),
@@ -892,27 +855,108 @@ async function initTipsTicker() {
   };
   Object.entries(areaMap).forEach(([area, el]) => {
     if (!el) return;
-    el.addEventListener('mouseenter', () => {
-      tipsPriorityArea = area;
-      restartTickerWithSequence(track, buildSequence(area));
-    });
-    el.addEventListener('mouseleave', () => {
-      tipsPriorityArea = null;
-      restartTickerWithSequence(track, buildSequence());
-    });
+    el.addEventListener('mouseenter', () => startArea(area));
+    el.addEventListener('mouseleave', () => stopArea());
   });
-  // Also prioritize tips when hovering the runtime selector
   if (runtimeProviderSel) {
-    runtimeProviderSel.addEventListener('mouseenter', () => {
-      tipsPriorityArea = 'runtime';
-      restartTickerWithSequence(track, buildSequence('runtime'));
-    });
-    runtimeProviderSel.addEventListener('mouseleave', () => {
-      tipsPriorityArea = null;
-      restartTickerWithSequence(track, buildSequence());
-    });
+    runtimeProviderSel.addEventListener('mouseenter', () => startArea('runtime'));
+    runtimeProviderSel.addEventListener('mouseleave', () => stopArea());
   }
 }
 
-// Kick off ticker after DOM paint
-setTimeout(initTipsTicker, 0);
+// Bottom-bar tips (static text, context dependent)
+function initBottomTips() {
+  const track = document.getElementById('tips-track');
+  if (!track) return;
+  // Defaults + optional overrides
+  const byArea = {
+    chat: [
+      'Chat: Ask for code, then use Insert',
+      'Chat: Shift+Enter adds a newline',
+      'Chat: Be specific about inputs and outputs',
+      'Chat: Say which libraries you prefer',
+      'Chat: Ask for a short runnable snippet',
+      'Chat: Use Examples to get started faster',
+    ],
+    code: [
+      'Code: Modify the code and press Run',
+      'Code: Change language under the header',
+      'Code: Pick runtime from the dropdown',
+      'Code: Use # requirements: to add packages (Gradio Lite)',
+      'Code: Use Examples → Codes to insert snippets',
+      'Code: Keep plots in JupyterLite; UIs in Gradio',
+    ],
+    examples: [
+      'Examples: Click Run to auto-select runtime',
+      'Examples: Prompts send directly to chat',
+      'Examples: Use search to filter examples',
+      'Examples: Insert to load code into the editor',
+      'Examples: Gradio items switch runtime automatically',
+      'Examples: Prompt ideas help shape better code',
+    ],
+    output: [
+      'Console: Results and plots appear here',
+      'Console: Switch runtime from the dropdown',
+      'Console: Each run adds a new cell',
+      'Console: Errors show in red (stderr)',
+      'Console: Use JupyterLite for plotting-heavy code',
+      'Console: Use Gradio for interactive demos',
+    ],
+    runtime: [
+      'Runtime: Click to change where code runs',
+      'Runtime: JupyterLite for plots, Gradio for UI',
+      'Runtime: Pyodide is fast for quick scripts',
+      'Runtime: Switch anytime without losing code',
+      'Runtime: Choose based on the output you need',
+    ],
+    
+  };
+  Object.keys(byArea).forEach((k) => { if (!Array.isArray(byArea[k])) byArea[k] = []; });
+  const idx = { chat: 0, code: 0, examples: 0, output: 0, runtime: 0 };
+
+  function nextTip(area) {
+    const arr = byArea[area] && byArea[area].length ? byArea[area] : [''];
+    const i = (idx[area] || 0) % arr.length;
+    idx[area] = (i + 1) % arr.length;
+    return arr[i];
+  }
+
+  let activeArea = 'output';
+  let timer = null;
+
+  function renderOnce() {
+    track.textContent = nextTip(activeArea) || '';
+  }
+  function startCycle(area) {
+    stopCycle();
+    activeArea = area;
+    renderOnce();
+    timer = setInterval(renderOnce, 5000);
+  }
+  function stopCycle() {
+    if (timer) clearInterval(timer);
+    timer = null;
+  }
+
+  // Hook areas
+  const areaMap = {
+    chat: document.getElementById('chat-panel'),
+    code: document.getElementById('code-panel'),
+    examples: document.getElementById('examples-panel'),
+    output: document.getElementById('output-panel'),
+  };
+  Object.entries(areaMap).forEach(([area, el]) => {
+    if (!el) return;
+    el.addEventListener('mouseenter', () => startCycle(area));
+    el.addEventListener('mouseleave', () => startCycle('output'));
+  });
+  if (runtimeProviderSel) {
+    runtimeProviderSel.addEventListener('mouseenter', () => startCycle('runtime'));
+    runtimeProviderSel.addEventListener('mouseleave', () => startCycle('output'));
+  }
+
+  // Start with default area
+  startCycle('output');
+}
+
+window.addEventListener('load', initBottomTips);
