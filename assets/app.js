@@ -680,6 +680,7 @@ const defaultExamples = {
     { id: 'prompt-chart', title: 'Bar chart', text: 'Generate Python code to display a bar chart for fruit sales using matplotlib.' },
     { id: 'prompt-gradio', title: 'Gradio sentiment', text: 'Create a minimal Gradio app with a textbox and a label that returns whether the text is positive or negative (mock logic is fine).' },
     { id: 'prompt-gradio-transformer', title: 'Gradio sentiment with transformers', text: 'Create a minimal Gradio app with a textbox and a label that returns whether the text is positive or negative. Using transformer-js-py as pipeline. from transformers_js_py import pipeline. pipe = await pipeline ' }
+    { id: 'prompt-html', title: 'Html single page application', text: 'Make me a snake game. It should be futuristic, neon, cyberpunk style. Make sure the typography is suitably cool.' }
   ]
 };
 
