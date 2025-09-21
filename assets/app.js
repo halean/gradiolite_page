@@ -20,6 +20,7 @@ const runtimeProviderSel = $('#runtime-provider');
 const gradioRoot = $('#gradio-root');
 const jliteRoot = $('#jlite-root');
 const jliteIframe = $('#jupyterlite_cmd');
+let htmlPreviewWindow = null;
 // Examples UI elements
 const examplesList = document.querySelector('#examples-list');
 const examplesSearch = document.querySelector('#examples-search');
@@ -157,13 +158,74 @@ function appendChat(role, content) {
 
 // Code extraction from markdown fences
 function extractCodeFromMarkdown(md) {
-  // Find first triple-backtick block and extract language + code
-  const fence = /```(\w+)?\n([\s\S]*?)```/m;
-  const m = md.match(fence);
-  if (!m) return { language: null, code: '' };
-  const language = (m[1] || 'python').toLowerCase();
-  const code = m[2];
-  return { language, code };
+  if (!md) return { language: null, code: '' };
+  const htmlBlock = md.match(/```html\s*\n([\s\S]*?)```/i);
+  if (htmlBlock) {
+    return { language: 'html', code: htmlBlock[1].trim() };
+  }
+  const fence = md.match(/```(\w+)?\s*\n([\s\S]*?)```/m);
+  if (fence) {
+    const language = (fence[1] || 'python').toLowerCase();
+    const code = fence[2].trim();
+    return { language, code };
+  }
+  const generic = md.match(/```\s*([\s\S]*?)```/m);
+  if (generic) {
+    return { language: null, code: generic[1].trim() };
+  }
+  return { language: null, code: md.trim() };
+}
+
+function isWebsitePrompt(text) {
+  if (!text) return false;
+  return /(make|build|create|design|generate)\s+(a\s+)?(website|web\s*site|web\s*page|landing\s*page|portfolio\s*site|homepage)/i.test(text)
+    || /\bresponsive\s+website\b/i.test(text)
+    || /\bhtml\s+page\b/i.test(text);
+}
+
+function buildHtmlDocument(snippet) {
+  const trimmed = (snippet || '').trim();
+  if (!trimmed) return '';
+  if (/<html[\s>]/i.test(trimmed)) return trimmed;
+  if (/<body[\s>]/i.test(trimmed)) {
+    return `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="utf-8" />\n  <title>Generated Page</title>\n</head>\n${trimmed}\n</html>`;
+  }
+  return `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="utf-8" />\n  <title>Generated Page</title>\n  <style>body{margin:0;font-family:system-ui,sans-serif;}</style>\n</head>\n<body>\n${trimmed}\n</body>\n</html>`;
+}
+
+function looksLikeHtml(text) {
+  if (!text) return false;
+  const snippet = text.trim();
+  if (!snippet) return false;
+  return /^<!DOCTYPE html>/i.test(snippet)
+    || /<html[\s>]/i.test(snippet)
+    || /<head[\s>]/i.test(snippet)
+    || /<body[\s>]/i.test(snippet)
+    || (/<[a-z][^>]*>/i.test(snippet) && /<\/[^>]+>/i.test(snippet));
+}
+
+function showHtmlPopup(html) {
+  const docHtml = buildHtmlDocument(html);
+  if (!docHtml) {
+    appendChat('system', 'No HTML content to preview.');
+    return;
+  }
+  try {
+    if (htmlPreviewWindow && !htmlPreviewWindow.closed) {
+      htmlPreviewWindow.close();
+    }
+    htmlPreviewWindow = window.open('', 'gradiolite-html-preview', 'width=960,height=720');
+    if (!htmlPreviewWindow) {
+      appendChat('system', 'Popup blocked. Allow popups to preview the page.');
+      return;
+    }
+    htmlPreviewWindow.document.open();
+    htmlPreviewWindow.document.write(docHtml);
+    htmlPreviewWindow.document.close();
+    htmlPreviewWindow.focus();
+  } catch (err) {
+    appendChat('system', `Unable to open preview: ${err.message}`);
+  }
 }
 
 // Pyodide for chat-side logic (simple, local rules or utilities)
@@ -230,9 +292,9 @@ async function callToyLLM(messages) {
 async function callOpenAI(messages, key) {
   // Simple, model-agnostic call using Chat Completions. No backend.
   const body = {
-    model: 'gpt-4o-mini',
+    model: 'gpt-5-mini',
     messages,
-    temperature: 0.2,
+    
   };
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -349,7 +411,7 @@ const chatHistory = [
   {
     role: 'system',
     content:
-      'You are a helpful coding assistant. Respond with code only: output a single runnable Python snippet in a ```python block. Do not include installation steps, pip/conda commands, environment setup, or extraneous prose. Assume all dependencies are available. Always have the objective in mind: provide code that can be run to achieve the user\'s goal. If you need to use a library, just use it. If you need to define a function or class, do so. Keep your responses concise and focused on the code needed to accomplish the task. If the user asks for an explanation, respond with a brief comment in the code. Never say you are an AI model or mention limitations. Never include any text outside of the code block. The code should end the object to be returned or printed. If the user asks a non-coding question, respond with "I can only assist with coding tasks."',
+      'You are a helpful coding assistant. Respond with code only: output a single runnable snippet in a ```<language>``` block. Choose the most appropriate language for the user\'s request. When the user asks for a website or webpage, return a complete HTML document (include inline CSS/JS if needed) in a ```html``` block. Do not include installation steps, pip/conda commands, environment setup, or extraneous prose. Assume all dependencies are available. Always have the objective in mind: provide code that can be run to achieve the user\'s goal. If you need to use a library, just use it. If you need to define a function or class, do so. Keep your responses concise and focused on the code needed to accomplish the task. If the user asks for an explanation, respond with brief comments in the code. Never say you are an AI model or mention limitations. Never include any text outside of the code block. End the code with the final value to return or print. If the user asks a non-coding question, respond with "I can only assist with coding tasks."',
   },
 ];
 
@@ -357,6 +419,7 @@ chatSend.addEventListener('click', async () => {
   const prompt = chatInput.value.trim();
   if (!prompt) return;
   chatInput.value = '';
+  const wantsWebsite = isWebsitePrompt(prompt);
   appendChat('user', prompt);
   chatHistory.push({ role: 'user', content: prompt });
 
@@ -367,10 +430,18 @@ chatSend.addEventListener('click', async () => {
     thinkingEl.textContent = reply;
     chatHistory.push({ role: 'assistant', content: reply });
     const { language, code } = extractCodeFromMarkdown(reply);
-    if (code) {
-      codeLang.textContent = language || 'python';
-      setEditorLanguage((language || 'python').toLowerCase());
-      setEditorValue(code);
+    const effectiveLang = language || (wantsWebsite ? 'html' : null);
+    const effectiveCode = code || '';
+    if (effectiveCode) {
+      const normalizedLang = (effectiveLang || 'python').toLowerCase();
+      codeLang.textContent = normalizedLang;
+      setEditorLanguage(normalizedLang);
+      setEditorValue(effectiveCode);
+      if (normalizedLang === 'html' || wantsWebsite) {
+        showHtmlPopup(effectiveCode);
+      }
+    } else if (wantsWebsite) {
+      showHtmlPopup(reply);
     }
   } catch (e) {
     thinkingEl.textContent = `Error: ${e.message}`;
@@ -389,6 +460,11 @@ runBtn.addEventListener('click', () => {
   const code = getEditorValue();
   if (!code.trim()) {
     appendOutput('No code to run.');
+    return;
+  }
+  const currentLang = (codeLang.textContent || '').toLowerCase().trim();
+  if (currentLang === 'html' || looksLikeHtml(code)) {
+    showHtmlPopup(code);
     return;
   }
   const runtime = runtimeProviderSel.value;
