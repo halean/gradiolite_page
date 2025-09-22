@@ -18,6 +18,7 @@ const openaiKeyInput = $('#openai-key');
 const saveLLMBtn = $('#save-llm');
 const runtimeProviderSel = $('#runtime-provider');
 const gradioRoot = $('#gradio-root');
+const htmlRoot = $('#html-root');
 const jliteRoot = $('#jlite-root');
 const jliteIframe = $('#jupyterlite_cmd');
 let htmlPreviewWindow = null;
@@ -228,6 +229,28 @@ function showHtmlPopup(html) {
   }
 }
 
+function renderHtmlPreview(html) {
+  if (!htmlRoot) {
+    showHtmlPopup(html);
+    return;
+  }
+  const docHtml = buildHtmlDocument(html);
+  htmlRoot.replaceChildren();
+  if (!docHtml) {
+    const empty = document.createElement('div');
+    empty.className = 'html-empty';
+    empty.textContent = 'No HTML content to display.';
+    htmlRoot.appendChild(empty);
+    runtimeStatus.textContent = 'html: empty';
+    return;
+  }
+  const frame = document.createElement('iframe');
+  frame.setAttribute('sandbox', 'allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts');
+  frame.srcdoc = docHtml;
+  htmlRoot.appendChild(frame);
+  runtimeStatus.textContent = 'html: rendered';
+}
+
 // Pyodide for chat-side logic (simple, local rules or utilities)
 // We keep this lightweight; it's not used to run user code. That happens in a separate worker.
 let pyodideReady = false;
@@ -415,9 +438,36 @@ const chatHistory = [
   },
 ];
 
+function consumePendingRuntimeFromExamples(hasCode) {
+  if (!chatSend || !runtimeProviderSel) return;
+  const pendingRuntime = chatSend.dataset.pendingRuntime;
+  if (!pendingRuntime) {
+    delete chatSend.dataset.pendingAutorun;
+    return;
+  }
+  const shouldAutoRun = chatSend.dataset.pendingAutorun === '1';
+  delete chatSend.dataset.pendingRuntime;
+  delete chatSend.dataset.pendingAutorun;
+  runtimeProviderSel.value = pendingRuntime;
+  if (shouldAutoRun) {
+    if (hasCode) runBtn?.click();
+    return;
+  }
+  runtimeProviderSel.dispatchEvent(new Event('change'));
+}
+
+function clearPendingRuntimeFromExamples() {
+  if (!chatSend) return;
+  delete chatSend.dataset.pendingRuntime;
+  delete chatSend.dataset.pendingAutorun;
+}
+
 chatSend.addEventListener('click', async () => {
   const prompt = chatInput.value.trim();
-  if (!prompt) return;
+  if (!prompt) {
+    clearPendingRuntimeFromExamples();
+    return;
+  }
   chatInput.value = '';
   const wantsWebsite = isWebsitePrompt(prompt);
   appendChat('user', prompt);
@@ -432,19 +482,32 @@ chatSend.addEventListener('click', async () => {
     const { language, code } = extractCodeFromMarkdown(reply);
     const effectiveLang = language || (wantsWebsite ? 'html' : null);
     const effectiveCode = code || '';
+    const hasRunnableCode = !!effectiveCode;
     if (effectiveCode) {
       const normalizedLang = (effectiveLang || 'python').toLowerCase();
       codeLang.textContent = normalizedLang;
       setEditorLanguage(normalizedLang);
       setEditorValue(effectiveCode);
       if (normalizedLang === 'html' || wantsWebsite) {
-        showHtmlPopup(effectiveCode);
+        if (runtimeProviderSel.value === 'html-preview') {
+          switchToView('html');
+          renderHtmlPreview(effectiveCode);
+        } else {
+          showHtmlPopup(effectiveCode);
+        }
       }
     } else if (wantsWebsite) {
-      showHtmlPopup(reply);
+      if (runtimeProviderSel.value === 'html-preview') {
+        switchToView('html');
+        renderHtmlPreview(reply);
+      } else {
+        showHtmlPopup(reply);
+      }
     }
+    consumePendingRuntimeFromExamples(hasRunnableCode);
   } catch (e) {
     thinkingEl.textContent = `Error: ${e.message}`;
+    clearPendingRuntimeFromExamples();
   }
 });
 
@@ -463,12 +526,17 @@ runBtn.addEventListener('click', () => {
     return;
   }
   const currentLang = (codeLang.textContent || '').toLowerCase().trim();
+  const runtime = runtimeProviderSel.value;
+  storage.set('runtime_provider', runtime);
+  if (runtime === 'html-preview') {
+    switchToView('html');
+    renderHtmlPreview(code);
+    return;
+  }
   if (currentLang === 'html' || looksLikeHtml(code)) {
     showHtmlPopup(code);
     return;
   }
-  const runtime = runtimeProviderSel.value;
-  storage.set('runtime_provider', runtime);
   if (runtime === 'gradio-lite') {
     switchToView('gradio');
     // Execute code via embedded Gradio Lite runtime
@@ -492,15 +560,17 @@ function switchToView(view) {
   const consoleView = nbRoot;
   const grRoot = gradioRoot;
   const jlRoot = jliteRoot;
-  consoleView.classList.remove('active');
-  grRoot.classList.remove('active');
-  jlRoot.classList.remove('active');
+  const htmlView = htmlRoot;
+  [consoleView, grRoot, jlRoot, htmlView].forEach((el) => el?.classList.remove('active'));
   if (view === 'gradio') {
     grRoot.classList.add('active');
     runtimeStatus.textContent = 'gradio-lite: loading';
   } else if (view === 'jupyterlite') {
     jlRoot.classList.add('active');
     runtimeStatus.textContent = 'jupyterlite: loading';
+  } else if (view === 'html') {
+    htmlView?.classList.add('active');
+    runtimeStatus.textContent = 'html: ready';
   } else {
     consoleView.classList.add('active');
     runtimeStatus.textContent = 'pyodide: ready';
@@ -615,7 +685,15 @@ function detectAutoRequirements(pyText) {
 }
 
 // Initialize default visible output view
-switchToView(runtimeProviderSel.value === 'gradio-lite' ? 'gradio' : 'console');
+if (runtimeProviderSel.value === 'gradio-lite') {
+  switchToView('gradio');
+} else if (runtimeProviderSel.value === 'jupyterlite') {
+  switchToView('jupyterlite');
+} else if (runtimeProviderSel.value === 'html-preview') {
+  switchToView('html');
+} else {
+  switchToView('console');
+}
 // Initialize Monaco (ignore failures in offline/dev)
 try { ensureMonaco().catch(() => {}); } catch (_) {}
 // Preload Gradio Lite if currently selected; also load on selection change
@@ -629,6 +707,9 @@ runtimeProviderSel.addEventListener('change', () => {
     switchToView('jupyterlite');
     runtimeStatus.textContent = 'jupyterlite: loading';
     loadJupyterLite(getEditorValue());
+  } else if (runtimeProviderSel.value === 'html-preview') {
+    switchToView('html');
+    renderHtmlPreview(getEditorValue());
   } else {
     switchToView('console');
   }
@@ -738,6 +819,7 @@ function renderExamples() {
       const guessRuntimeForCode = (item) => {
         if (item.runtime) return item.runtime;
         const blob = `${(item.code||'')} ${(item.tags||[]).join(' ')}`.toLowerCase();
+        if (looksLikeHtml(item.code || '')) return 'html-preview';
         if (blob.includes('gradio') || blob.includes('<gradio-lite')) return 'gradio-lite';
         return 'jupyterlite';
       };
@@ -767,17 +849,19 @@ function renderExamples() {
         if (chatInput) chatInput.value = it.text || '';
         // Default prompts to JupyterLite unless runtime specified
         const rt = it.runtime || 'jupyterlite';
-        runtimeProviderSel.value = rt;
-        runtimeProviderSel.dispatchEvent(new Event('change'));
-        chatSend?.click();
+        if (runtimeProviderSel) runtimeProviderSel.value = rt;
+        if (chatSend) {
+          chatSend.dataset.pendingRuntime = rt;
+          chatSend.dataset.pendingAutorun = '1';
+          chatSend.click();
+        }
       });
       const insertBtn = document.createElement('button');
       insertBtn.textContent = 'Insert';
       insertBtn.addEventListener('click', () => {
         if (chatInput) chatInput.value = it.text || '';
         const rt = it.runtime || 'jupyterlite';
-        runtimeProviderSel.value = rt;
-        runtimeProviderSel.dispatchEvent(new Event('change'));
+        if (runtimeProviderSel) runtimeProviderSel.value = rt;
         chatInput?.focus();
       });
       actions.appendChild(sendBtn);

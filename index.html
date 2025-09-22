@@ -25,6 +25,7 @@
             <option value="pyodide">Pyodide Console</option>
             <option value="gradio-lite">Gradio Lite</option>
             <option value="jupyterlite">JupyterLite</option>
+            <option value="html-preview">HTML Preview</option>
           </select>
         </label>
         <button id="save-llm">Save</button>
@@ -72,6 +73,7 @@
         <div class="output-views">
           <div id="notebook" class="console-view nb-root"></div>
           <div id="gradio-root" class="gradio-root"></div>
+          <div id="html-root" class="html-root"></div>
           <div id="jlite-root" class="jlite-root">
             <iframe 
               id="jupyterlite_cmd"
