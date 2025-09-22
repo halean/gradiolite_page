@@ -14,7 +14,7 @@ const runBtn = $('#run-code');
 const nbRoot = $('#notebook');
 const runtimeStatus = $('#runtime-status');
 const llmProviderSel = $('#llm-provider');
-const openaiKeyInput = $('#openai-key');
+const openaiPasswordInput = $('#openai-password');
 const saveLLMBtn = $('#save-llm');
 const runtimeProviderSel = $('#runtime-provider');
 const gradioRoot = $('#gradio-root');
@@ -34,16 +34,162 @@ const storage = {
   set(key, val) { localStorage.setItem(key, JSON.stringify(val)); },
 };
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+let encryptedOpenAIKey = null;
+let cachedDecryptedOpenAIKey = null;
+let cachedDecryptionPassword = null;
+
+function getCrypto() {
+  if (typeof globalThis !== 'undefined') {
+    return globalThis.crypto || globalThis.msCrypto || null;
+  }
+  if (typeof window !== 'undefined') {
+    return window.crypto || window.msCrypto || null;
+  }
+  if (typeof self !== 'undefined') {
+    return self.crypto || self.msCrypto || null;
+  }
+  return null;
+}
+
+function getSubtleCrypto() {
+  const cryptoObj = getCrypto();
+  if (!cryptoObj) return null;
+  return cryptoObj.subtle || cryptoObj.webkitSubtle || null;
+}
+
+function assertSubtleCryptoAvailable() {
+  const cryptoObj = getCrypto();
+  const subtle = getSubtleCrypto();
+  if (cryptoObj && subtle) return { cryptoObj, subtle };
+  const hint = window?.isSecureContext === false
+    ? ' Serve this app over https:// or http://localhost to enable the Web Crypto API.'
+    : '';
+  throw new Error(`Web Crypto API not available in this browser.${hint}`);
+}
+
+function setEncryptedOpenAIKey(value) {
+  encryptedOpenAIKey = typeof value === 'string' && value ? value : null;
+  cachedDecryptedOpenAIKey = null;
+  cachedDecryptionPassword = null;
+}
+
+const storedEncryptedKey = storage.get('encrypted_openai_key', null);
+if (storedEncryptedKey) setEncryptedOpenAIKey(storedEncryptedKey);
+
+const PBKDF2_ITERATIONS = 100000;
+const SALT_LENGTH = 16;
+const IV_LENGTH = 12;
+
+function stringToUint8Array(str) {
+  return textEncoder.encode(str);
+}
+
+function uint8ArrayToBase64(bytes) {
+  let binary = '';
+  const len = bytes.length;
+  for (let i = 0; i < len; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8Array(b64) {
+  const binary = atob(b64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function deriveAesGcmKey(passwordBytes, salt) {
+  const { subtle } = assertSubtleCryptoAvailable();
+  const keyMaterial = await subtle.importKey('raw', passwordBytes, 'PBKDF2', false, ['deriveKey']);
+  return subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt,
+      iterations: PBKDF2_ITERATIONS,
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function decryptStoredOpenAIKey(password) {
+  if (!encryptedOpenAIKey) throw new Error('Encrypted OpenAI key is not configured.');
+  if (!password) throw new Error('Enter the password to decrypt the OpenAI key.');
+  const { subtle } = assertSubtleCryptoAvailable();
+  const packed = base64ToUint8Array(encryptedOpenAIKey);
+  if (packed.length <= (SALT_LENGTH + IV_LENGTH)) throw new Error('Encrypted OpenAI key payload is invalid.');
+  const salt = packed.slice(0, SALT_LENGTH);
+  const iv = packed.slice(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
+  const cipher = packed.slice(SALT_LENGTH + IV_LENGTH);
+  const passwordBytes = stringToUint8Array(password);
+  const aesKey = await deriveAesGcmKey(passwordBytes, salt);
+  let decrypted;
+  try {
+    decrypted = await subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, cipher);
+  } catch (err) {
+    throw new Error('Password did not decrypt the OpenAI key.');
+  }
+  return textDecoder.decode(decrypted);
+}
+
+async function encryptOpenAIKeyWithPassword(plainKey, password) {
+  if (!plainKey) throw new Error('Provide an OpenAI key to encrypt.');
+  if (!password) throw new Error('Provide a password for encryption.');
+  const { cryptoObj, subtle } = assertSubtleCryptoAvailable();
+  const salt = cryptoObj.getRandomValues(new Uint8Array(SALT_LENGTH));
+  const iv = cryptoObj.getRandomValues(new Uint8Array(IV_LENGTH));
+  const passwordBytes = stringToUint8Array(password);
+  const aesKey = await deriveAesGcmKey(passwordBytes, salt);
+  const cipherBuffer = await subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, stringToUint8Array(plainKey));
+  const cipherBytes = new Uint8Array(cipherBuffer);
+  const packed = new Uint8Array(salt.length + iv.length + cipherBytes.length);
+  packed.set(salt, 0);
+  packed.set(iv, salt.length);
+  packed.set(cipherBytes, salt.length + iv.length);
+  return uint8ArrayToBase64(packed);
+}
+
+async function resolveEncryptedOpenAIKey(password) {
+  if (!encryptedOpenAIKey) throw new Error('Encrypted OpenAI key is not configured. Add encryptedOpenAIKey to assets/config.json or local storage.');
+  if (!password) throw new Error('Enter the password to decrypt the OpenAI key.');
+  if (cachedDecryptedOpenAIKey && cachedDecryptionPassword === password) return cachedDecryptedOpenAIKey;
+  const decrypted = await decryptStoredOpenAIKey(password);
+  cachedDecryptedOpenAIKey = decrypted;
+  cachedDecryptionPassword = password;
+  return decrypted;
+}
+
+window.gradioliteEncryptOpenAIKey = async function gradioliteEncryptOpenAIKey(plainKey, password) {
+  const encrypted = await encryptOpenAIKeyWithPassword(plainKey, password);
+  console.log('Encrypted OpenAI key:', encrypted);
+  return encrypted;
+};
+
+window.gradioliteSetEncryptedOpenAIKey = function gradioliteSetEncryptedOpenAIKey(packedKey, persist = false) {
+  setEncryptedOpenAIKey(packedKey);
+  if (persist) storage.set('encrypted_openai_key', packedKey);
+  return encryptedOpenAIKey;
+};
+
 // Restore LLM provider settings
 llmProviderSel.value = storage.get('llm_provider', 'toy');
-openaiKeyInput.value = storage.get('openai_key', '');
+if (openaiPasswordInput) openaiPasswordInput.value = '';
 runtimeProviderSel.value = storage.get('runtime_provider', 'pyodide');
 
 saveLLMBtn.addEventListener('click', () => {
   storage.set('llm_provider', llmProviderSel.value);
-  storage.set('openai_key', openaiKeyInput.value);
   storage.set('runtime_provider', runtimeProviderSel.value);
-  appendChat('system', `Saved LLM provider: ${llmProviderSel.value}`);
+  appendChat('system', `Saved LLM provider: ${llmProviderSel.value} (password not stored)`);
 });
 
 // Monaco Editor setup (VS Code-like editor)
@@ -58,9 +204,14 @@ let appConfig = {
     gradioLite: 'https://cdn.jsdelivr.net/npm/@gradio/lite/dist/lite.js',
     monacoBase: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.48.0/min/vs'
   },
+  security: { encryptedOpenAIKey: null },
   tips: [],
   tipsByArea: { chat: [], code: [], examples: [], output: [] }
 };
+
+if (!encryptedOpenAIKey && appConfig.security?.encryptedOpenAIKey) {
+  setEncryptedOpenAIKey(appConfig.security.encryptedOpenAIKey);
+}
 
 async function loadConfig() {
   try {
@@ -73,6 +224,8 @@ async function loadConfig() {
       gradioLite: { ...appConfig.gradioLite, ...(cfg.gradioLite || {}) },
       cdn: { ...appConfig.cdn, ...(cfg.cdn || {}) }
     };
+    const cfgEncrypted = cfg?.security?.encryptedOpenAIKey ?? cfg?.encryptedOpenAIKey ?? appConfig?.security?.encryptedOpenAIKey ?? appConfig?.encryptedOpenAIKey;
+    if (cfgEncrypted) setEncryptedOpenAIKey(cfgEncrypted);
   } catch {}
   // Try to load examples from optional JSON
   try {
@@ -294,11 +447,8 @@ async function ensurePyodideScript() {
 async function callLLM(messages) {
   const provider = llmProviderSel.value;
   if (provider === 'openai') {
-    const key = openaiKeyInput.value.trim();
-    if (!key) {
-      appendChat('system', 'OpenAI key missing. Falling back to Toy.');
-      return callToyLLM(messages);
-    }
+    const password = openaiPasswordInput ? openaiPasswordInput.value : '';
+    const key = await resolveEncryptedOpenAIKey(password);
     return callOpenAI(messages, key);
   }
   return callToyLLM(messages);
@@ -315,7 +465,7 @@ async function callToyLLM(messages) {
 async function callOpenAI(messages, key) {
   // Simple, model-agnostic call using Chat Completions. No backend.
   const body = {
-    model: 'gpt-5-mini',
+    model: 'gpt-5',
     messages,
     
   };

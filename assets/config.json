@@ -10,6 +10,9 @@
     "pyodideBase": "https://cdn.jsdelivr.net/pyodide/v0.26.1/full/",
     "gradioLite": "https://cdn.jsdelivr.net/npm/@gradio/lite/dist/lite.js",
     "monacoBase": "https://cdn.jsdelivr.net/npm/monaco-editor@0.48.0/min/vs"
+  },
+  "security":{
+    "encryptedOpenAIKey": "wDzu433jc6p0XsoHuKp+IDHTm4c2BU5A76D3VWJ1u7vAhTsMhj4zR1+uJ+eSJPvgP0lMHtXLCuTNKw4/5fW+6gXdAhLxqAOS3cz9rY2+L+ZUFp1MNe0DZQPe7Fat5hoEkuuXSD1C9CzU9AQ7M331mEvwuMKrOw/poEV6VdYqb8ACjXzat1fvoiJKfOtHRmkl4DB6wduvdkvRTc8STYbLlJqvpGdRSzBcierVjBarYOXzO9PK0uUX5P1bsrpi0gBFSHy6km9UPtJydAebzloFk41WLg=="
   }
 }
 
