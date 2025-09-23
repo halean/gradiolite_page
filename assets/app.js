@@ -182,7 +182,7 @@ window.gradioliteSetEncryptedOpenAIKey = function gradioliteSetEncryptedOpenAIKe
 };
 
 // Restore LLM provider settings
-llmProviderSel.value = storage.get('llm_provider', 'toy');
+llmProviderSel.value = storage.get('llm_provider', 'openai');
 if (openaiPasswordInput) openaiPasswordInput.value = '';
 runtimeProviderSel.value = storage.get('runtime_provider', 'pyodide');
 
